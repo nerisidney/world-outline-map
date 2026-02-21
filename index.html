@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>World Outline Map</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="map-stage">
+        <svg id="world-map" aria-label="World country outline map" role="img"></svg>
+      </section>
+      <aside class="side-panel" aria-live="polite">
+        <h2 class="side-panel-title">Highlighted Countries</h2>
+        <p class="side-panel-subtitle">Press letters to add groups. Press Space to reset.</p>
+        <ul id="highlighted-country-list" class="country-list">
+          <li class="country-list-empty">No countries highlighted.</li>
+        </ul>
+      </aside>
+    </main>
+
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
