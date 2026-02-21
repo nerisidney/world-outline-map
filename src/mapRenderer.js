@@ -125,26 +125,30 @@ function getLeaderText(row) {
   return roleLabel ? `Leader: ${row.leaderName} (${roleLabel})` : `Leader: ${row.leaderName}`;
 }
 
+function getCountryListElements() {
+  return Array.from(document.querySelectorAll("[data-role='highlighted-country-list']"));
+}
+
 function resetSidePanel() {
-  const sidePanelListEl = document.querySelector("#highlighted-country-list");
-  if (!sidePanelListEl) {
+  const listElements = getCountryListElements();
+  if (listElements.length === 0) {
     return;
   }
 
-  sidePanelListEl.innerHTML = "";
-  const emptyItem = document.createElement("li");
-  emptyItem.className = "country-list-empty";
-  emptyItem.textContent = "No countries highlighted.";
-  sidePanelListEl.appendChild(emptyItem);
+  for (const listEl of listElements) {
+    listEl.innerHTML = "";
+    const emptyItem = document.createElement("li");
+    emptyItem.className = "country-list-empty";
+    emptyItem.textContent = "No countries highlighted.";
+    listEl.appendChild(emptyItem);
+  }
 }
 
 function updateSidePanel(countryRows, locale) {
-  const sidePanelListEl = document.querySelector("#highlighted-country-list");
-  if (!sidePanelListEl) {
+  const listElements = getCountryListElements();
+  if (listElements.length === 0) {
     return;
   }
-
-  sidePanelListEl.innerHTML = "";
   if (countryRows.length === 0) {
     resetSidePanel();
     return;
@@ -152,39 +156,42 @@ function updateSidePanel(countryRows, locale) {
 
   const numberFormatter = new Intl.NumberFormat(locale || "en-US");
 
-  for (const row of countryRows) {
-    const listItem = document.createElement("li");
-    listItem.className = "country-list-item";
+  for (const listEl of listElements) {
+    listEl.innerHTML = "";
+    for (const row of countryRows) {
+      const listItem = document.createElement("li");
+      listItem.className = "country-list-item";
 
-    if (row.leaderImageUrl) {
-      const thumb = document.createElement("img");
-      thumb.className = "country-leader-thumb";
-      thumb.src = row.leaderImageUrl;
-      thumb.alt = row.leaderName ? `${row.leaderName} portrait` : `${row.name} leader portrait`;
-      thumb.loading = "lazy";
-      thumb.decoding = "async";
-      thumb.addEventListener("error", () => {
-        thumb.remove();
-      });
-      listItem.appendChild(thumb);
+      if (row.leaderImageUrl) {
+        const thumb = document.createElement("img");
+        thumb.className = "country-leader-thumb";
+        thumb.src = row.leaderImageUrl;
+        thumb.alt = row.leaderName ? `${row.leaderName} portrait` : `${row.name} leader portrait`;
+        thumb.loading = "lazy";
+        thumb.decoding = "async";
+        thumb.addEventListener("error", () => {
+          thumb.remove();
+        });
+        listItem.appendChild(thumb);
+      }
+
+      const textWrap = document.createElement("div");
+      textWrap.className = "country-list-content";
+
+      const mainLine = document.createElement("div");
+      mainLine.className = "country-main-line";
+      mainLine.style.color = row.color;
+      mainLine.textContent = getSidebarCountryText(row, numberFormatter);
+
+      const metaLine = document.createElement("div");
+      metaLine.className = "country-meta-line";
+      metaLine.textContent = getLeaderText(row);
+
+      textWrap.appendChild(mainLine);
+      textWrap.appendChild(metaLine);
+      listItem.appendChild(textWrap);
+      listEl.appendChild(listItem);
     }
-
-    const textWrap = document.createElement("div");
-    textWrap.className = "country-list-content";
-
-    const mainLine = document.createElement("div");
-    mainLine.className = "country-main-line";
-    mainLine.style.color = row.color;
-    mainLine.textContent = getSidebarCountryText(row, numberFormatter);
-
-    const metaLine = document.createElement("div");
-    metaLine.className = "country-meta-line";
-    metaLine.textContent = getLeaderText(row);
-
-    textWrap.appendChild(mainLine);
-    textWrap.appendChild(metaLine);
-    listItem.appendChild(textWrap);
-    sidePanelListEl.appendChild(listItem);
   }
 }
 

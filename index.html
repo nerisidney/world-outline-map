@@ -7,6 +7,11 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <header class="top-link-banner">
+      Live site:
+      <a href="https://nerisidney.github.io/world-outline-map/">https://nerisidney.github.io/world-outline-map/</a>
+    </header>
+
     <main class="app-shell">
       <section class="map-stage">
         <svg id="world-map" aria-label="World country outline map" role="img"></svg>
@@ -14,11 +19,28 @@
       <aside class="side-panel" aria-live="polite">
         <h2 class="side-panel-title">Highlighted Countries</h2>
         <p class="side-panel-subtitle">Press letters to add groups. Press Space to reset.</p>
-        <ul id="highlighted-country-list" class="country-list">
+        <ul id="highlighted-country-list" class="country-list" data-role="highlighted-country-list">
           <li class="country-list-empty">No countries highlighted.</li>
         </ul>
       </aside>
     </main>
+
+    <section id="mobile-bottom-sheet" class="mobile-bottom-sheet" aria-live="polite" aria-expanded="false">
+      <button id="mobile-bottom-sheet-toggle" class="mobile-bottom-sheet-toggle" type="button" aria-expanded="false">
+        Highlighted Countries
+      </button>
+      <div class="mobile-bottom-sheet-content">
+        <ul id="mobile-highlighted-country-list" class="country-list" data-role="highlighted-country-list">
+          <li class="country-list-empty">No countries highlighted.</li>
+        </ul>
+      </div>
+    </section>
+
+    <nav id="mobile-letter-tray" class="mobile-letter-tray" aria-label="Mobile letter controls">
+      <button id="mobile-clear-btn" class="mobile-tray-button mobile-clear-btn" type="button">Clear</button>
+      <button id="mobile-list-toggle" class="mobile-tray-button" type="button" aria-expanded="false">List</button>
+      <div id="mobile-letter-buttons" class="mobile-letter-buttons"></div>
+    </nav>
 
     <script type="module" src="./src/app.js"></script>
   </body>

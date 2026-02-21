@@ -25,6 +25,14 @@ Then open `http://localhost:8000` in a browser.
 - Sidebar rows show leader name and role text, with thumbnail when available.
 - Press `Space` to clear all highlights, circles, labels, and sidebar values.
 
+## Mobile Controls
+
+- On screens up to `960px`, use the sticky bottom letter tray instead of a physical keyboard.
+- Tap a letter chip to toggle that letter group on/off.
+- Tap `Clear` to reset highlights, circles, labels, badges, and list content.
+- Tap `List` to open/close the mobile bottom sheet with highlighted countries and leader details.
+- Desktop keyboard shortcuts (`A-Z`, `Space`) continue to work on larger screens.
+
 ## Project Structure
 
 - `index.html` - page shell and SVG mount point
@@ -67,6 +75,10 @@ To regenerate population data:
 ```bash
 python3 scripts/build_population_data.py
 ```
+
+## Deployment
+
+- GitHub Pages live URL: `https://nerisidney.github.io/world-outline-map/`
 
 ## Next Phase (Interactivity)
 
