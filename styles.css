@@ -27,13 +27,11 @@ body {
   padding: 10px 14px;
   border-bottom: 1px solid rgba(31, 42, 55, 0.15);
   background: rgba(255, 255, 255, 0.88);
-  font-size: 0.9rem;
+  font-size: 1rem;
+  font-weight: 700;
+  text-align: center;
+  color: #1f2a37;
   line-height: 1.2;
-}
-
-.top-link-banner a {
-  color: #0a4ea7;
-  text-decoration: underline;
 }
 
 .app-shell {
