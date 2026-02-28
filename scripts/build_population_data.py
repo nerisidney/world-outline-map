@@ -13,8 +13,10 @@ WB_COUNTRIES_URL = "https://api.worldbank.org/v2/country?format=json&per_page=40
 WB_POPULATION_URL = "https://api.worldbank.org/v2/country/all/indicator/SP.POP.TOTL?format=json&mrv=1&per_page=20000"
 M49_BRIDGE_URL = "https://raw.githubusercontent.com/datasets/country-codes/main/data/country-codes.csv"
 FLAG_EMOJI_URL = "https://cdn.jsdelivr.net/npm/country-flag-emoji-json@2.0.0/dist/by-code.json"
+RESTCOUNTRIES_URL = "https://restcountries.com/v3.1/all?fields=cca3,capital,capitalInfo"
 WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql"
 WIKIDATA_TIMEOUT_SECONDS = 45
+ALLOWED_LEADER_IMAGE_HOSTS = {"commons.wikimedia.org", "upload.wikimedia.org"}
 WIKIDATA_LEADERS_QUERY = """
 SELECT ?iso2 ?hogLabel ?hogImage ?hosLabel ?hosImage WHERE {
   ?country wdt:P297 ?iso2.
@@ -132,7 +134,7 @@ def fetch_wikidata_leaders() -> dict[str, dict]:
         leaders_by_iso2[iso2] = {
             "leaderName": selected_name,
             "leaderRole": selected_role,
-            "leaderImageUrl": to_thumbnail_url(selected_image, width=48),
+            "leaderImageUrl": sanitize_leader_image_url(selected_image, width=48),
             "leaderSource": "wikidata",
         }
 
@@ -201,6 +203,24 @@ def to_thumbnail_url(raw_url: str, width: int = 48) -> str:
     return urlunsplit((url_parts.scheme, url_parts.netloc, url_parts.path, new_query, url_parts.fragment))
 
 
+def sanitize_leader_image_url(raw_url: str, width: int = 48) -> str:
+    normalized_url = raw_url.replace("http://", "https://", 1).strip()
+    if not normalized_url:
+        return ""
+
+    try:
+        url_parts = urlsplit(normalized_url)
+    except Exception:
+        return ""
+
+    if url_parts.scheme != "https":
+        return ""
+    if (url_parts.hostname or "").lower() not in ALLOWED_LEADER_IMAGE_HOSTS:
+        return ""
+
+    return to_thumbnail_url(normalized_url, width=width)
+
+
 def parse_bridge(csv_text: str) -> tuple[dict[str, str], dict[str, str]]:
     rows = csv.DictReader(csv_text.splitlines())
     iso3_to_m49: dict[str, str] = {}
@@ -253,12 +273,48 @@ def parse_bridge(csv_text: str) -> tuple[dict[str, str], dict[str, str]]:
     return iso3_to_m49, iso3_to_iso2
 
 
+def build_capitals_by_iso3(restcountries_payload) -> dict[str, dict]:
+    capitals_by_iso3: dict[str, dict] = {}
+    for row in restcountries_payload:
+        iso3 = str(row.get("cca3", "")).strip().upper()
+        if len(iso3) != 3:
+            continue
+
+        capital_name = ""
+        capital_raw = row.get("capital")
+        if isinstance(capital_raw, list) and capital_raw:
+            capital_name = str(capital_raw[0]).strip()
+        elif isinstance(capital_raw, str):
+            capital_name = capital_raw.strip()
+
+        capital_lat = None
+        capital_lng = None
+        latlng = (row.get("capitalInfo") or {}).get("latlng")
+        if isinstance(latlng, list) and len(latlng) >= 2:
+            try:
+                capital_lat = float(latlng[0])
+                capital_lng = float(latlng[1])
+            except (TypeError, ValueError):
+                capital_lat = None
+                capital_lng = None
+
+        capitals_by_iso3[iso3] = {
+            "capital": capital_name,
+            "capitalLat": capital_lat,
+            "capitalLng": capital_lng,
+        }
+
+    return capitals_by_iso3
+
+
 def build_population_snapshot() -> dict[str, dict]:
     countries_payload = fetch_json(WB_COUNTRIES_URL)
     populations_payload = fetch_json(WB_POPULATION_URL)
     flag_payload = fetch_json(FLAG_EMOJI_URL)
+    restcountries_payload = fetch_json(RESTCOUNTRIES_URL)
     bridge_csv_text = fetch_text(M49_BRIDGE_URL)
     leaders_by_iso2 = fetch_wikidata_leaders()
+    capitals_by_iso3 = build_capitals_by_iso3(restcountries_payload)
 
     countries = countries_payload[1]
     populations = populations_payload[1]
@@ -314,6 +370,9 @@ def build_population_snapshot() -> dict[str, dict]:
             **record,
             "iso2": iso2_code or "",
             "flagEmoji": flag_emoji,
+            "capital": (capitals_by_iso3.get(iso3, {}) or {}).get("capital", ""),
+            "capitalLat": (capitals_by_iso3.get(iso3, {}) or {}).get("capitalLat"),
+            "capitalLng": (capitals_by_iso3.get(iso3, {}) or {}).get("capitalLng"),
             "leaderName": (leaders_by_iso2.get(iso2_code or "", {}) or {}).get("leaderName", ""),
             "leaderRole": (leaders_by_iso2.get(iso2_code or "", {}) or {}).get("leaderRole", ""),
             "leaderImageUrl": (leaders_by_iso2.get(iso2_code or "", {}) or {}).get("leaderImageUrl", ""),

@@ -24,6 +24,14 @@ Then open `http://localhost:8000` in a browser.
 - The side panel shows exact population values (or `N/A`) and appends flag emoji after country names when available.
 - Sidebar rows show leader name and role text, with thumbnail when available.
 - Press `Space` to clear all highlights, circles, labels, and sidebar values.
+- A bilingual instruction banner is shown at the bottom (English + Hebrew).
+
+## Country Popup
+
+- The popup appears over the map area (not over the sidebar).
+- Click any country on the map, or click any highlighted country row in the sidebar/mobile list, to open details.
+- Popup content includes country name + flag, population, leader name/role, and leader photo (when available).
+- Close the popup with the `×` button or the `Esc` key.
 
 ## Mobile Controls
 
@@ -31,7 +39,24 @@ Then open `http://localhost:8000` in a browser.
 - Tap a letter chip to toggle that letter group on/off.
 - Tap `Clear` to reset highlights, circles, labels, badges, and list content.
 - Tap `List` to open/close the mobile bottom sheet with highlighted countries and leader details.
+- The bilingual instruction banner remains visible above the mobile tray.
 - Desktop keyboard shortcuts (`A-Z`, `Space`) continue to work on larger screens.
+
+## Zoom and Pan
+
+- Use `+` and `−` buttons on the map to zoom in/out.
+- Use `Reset` to return to default view.
+- Mouse wheel or trackpad over the map also zooms toward pointer position.
+- Drag the map while zoomed-in to pan.
+- At `500%` zoom and above, capital city labels appear on the map (for example, United States -> Washington, D.C.).
+- The map is SVG, so outlines/text stay crisp while zooming; leader photos request larger thumbnails as zoom increases.
+
+## Security Notes
+
+- A `Content-Security-Policy` meta policy is set in `index.html` to restrict scripts, images, and network connections.
+- Leader image URLs are validated to HTTPS and host-whitelisted (`commons.wikimedia.org`, `upload.wikimedia.org`) in both data build and runtime rendering paths.
+- Leader thumbnails use `referrerPolicy="no-referrer"`.
+- User-supplied HTML is not injected into the DOM (`textContent` is used for dynamic labels/text).
 
 ## Project Structure
 
@@ -55,6 +80,7 @@ Population data snapshot is built from:
 - World Bank population indicator (`SP.POP.TOTL`, latest available per country): `https://api.worldbank.org/v2/country/all/indicator/SP.POP.TOTL?format=json&mrv=1&per_page=20000`
 - UN M49 bridge dataset (ISO3 to numeric code): `https://raw.githubusercontent.com/datasets/country-codes/main/data/country-codes.csv`
 - Flag emoji dataset (`ISO2 -> emoji`): `https://cdn.jsdelivr.net/npm/country-flag-emoji-json@2.0.0/dist/by-code.json`
+- Country capitals and capital coordinates: `https://restcountries.com/v3.1/all?fields=cca3,capital,capitalInfo`
 - Wikidata leaders and images (head of government `P6`, head of state `P35`, image `P18`, form of government `P122`, ISO2 `P297`): `https://query.wikidata.org/`
 
 Leader selection rule in the builder:

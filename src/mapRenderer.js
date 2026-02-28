@@ -1,5 +1,5 @@
-import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
-import { feature } from "https://cdn.jsdelivr.net/npm/topojson-client@3/+esm";
+import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7.9.0/+esm";
+import { feature } from "https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/+esm";
 
 function resolveCountryObject(topology) {
   const objectKeys = Object.keys(topology.objects || {});
@@ -65,7 +65,13 @@ function ensureLayers(svgSelection) {
     .join("g")
     .attr("data-layer", "labels");
 
-  return { mapLayer, countriesLayer, circlesLayer, leaderBadgesLayer, labelsLayer, defsLayer };
+  const capitalsLayer = overlayLayer
+    .selectAll("g[data-layer='capitals']")
+    .data([null])
+    .join("g")
+    .attr("data-layer", "capitals");
+
+  return { mapLayer, countriesLayer, circlesLayer, leaderBadgesLayer, labelsLayer, capitalsLayer, defsLayer };
 }
 
 function getCountryInitial(countryName) {
@@ -144,7 +150,27 @@ function resetSidePanel() {
   }
 }
 
-function updateSidePanel(countryRows, locale) {
+function sanitizeLeaderImageUrl(imageUrl, allowedHosts = []) {
+  const raw = String(imageUrl || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  try {
+    const url = new URL(raw, window.location.href);
+    if (url.protocol !== "https:") {
+      return "";
+    }
+    if (Array.isArray(allowedHosts) && allowedHosts.length > 0 && !allowedHosts.includes(url.hostname)) {
+      return "";
+    }
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function updateSidePanel(countryRows, config) {
   const listElements = getCountryListElements();
   if (listElements.length === 0) {
     return;
@@ -154,19 +180,26 @@ function updateSidePanel(countryRows, locale) {
     return;
   }
 
-  const numberFormatter = new Intl.NumberFormat(locale || "en-US");
+  const numberFormatter = new Intl.NumberFormat(config.populationNumberLocale || "en-US");
 
   for (const listEl of listElements) {
     listEl.innerHTML = "";
     for (const row of countryRows) {
       const listItem = document.createElement("li");
       listItem.className = "country-list-item";
+      listItem.dataset.countryId = row.id;
+      listItem.dataset.countryName = row.name;
+      listItem.tabIndex = 0;
+      listItem.setAttribute("role", "button");
+      listItem.setAttribute("aria-label", `Show details for ${row.name}`);
 
-      if (row.leaderImageUrl) {
+      const safeLeaderImageUrl = sanitizeLeaderImageUrl(row.leaderImageUrl, config.allowedLeaderImageHosts);
+      if (safeLeaderImageUrl) {
         const thumb = document.createElement("img");
         thumb.className = "country-leader-thumb";
-        thumb.src = row.leaderImageUrl;
+        thumb.src = safeLeaderImageUrl;
         thumb.alt = row.leaderName ? `${row.leaderName} portrait` : `${row.name} leader portrait`;
+        thumb.referrerPolicy = "no-referrer";
         thumb.loading = "lazy";
         thumb.decoding = "async";
         thumb.addEventListener("error", () => {
@@ -199,6 +232,51 @@ function getLeaderBadgeX(row, config) {
   return row.x - (config.leaderBadgeRadius + config.leaderBadgeGap);
 }
 
+function withRequestedImageWidth(imageUrl, width) {
+  const normalizedUrl = String(imageUrl || "").trim();
+  if (!normalizedUrl) {
+    return "";
+  }
+
+  try {
+    const url = new URL(normalizedUrl);
+    url.searchParams.set("width", String(Math.max(48, Math.round(width))));
+    return url.toString();
+  } catch {
+    return normalizedUrl;
+  }
+}
+
+function getCapitalPoint({ record, centroid, projection }) {
+  const capitalName = String(record.capital || "").trim();
+  if (!capitalName) {
+    return null;
+  }
+
+  const lat = Number(record.capitalLat);
+  const lng = Number(record.capitalLng);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    const projected = projection([lng, lat]);
+    if (projected && Number.isFinite(projected[0]) && Number.isFinite(projected[1])) {
+      return {
+        name: capitalName,
+        x: projected[0],
+        y: projected[1],
+      };
+    }
+  }
+
+  if (Number.isFinite(centroid[0]) && Number.isFinite(centroid[1])) {
+    return {
+      name: capitalName,
+      x: centroid[0],
+      y: centroid[1],
+    };
+  }
+
+  return null;
+}
+
 export function renderWorldOutline({ svgEl, topoJson, populationByCountryId = {}, state, config }) {
   if (!svgEl) {
     throw new Error("renderWorldOutline requires a valid svgEl.");
@@ -224,11 +302,12 @@ export function renderWorldOutline({ svgEl, topoJson, populationByCountryId = {}
   );
 
   const path = d3.geoPath(projection);
-  const { mapLayer, countriesLayer, circlesLayer, leaderBadgesLayer, labelsLayer, defsLayer } = ensureLayers(svg);
+  const { mapLayer, countriesLayer, circlesLayer, leaderBadgesLayer, labelsLayer, capitalsLayer, defsLayer } = ensureLayers(svg);
 
   const tx = state.pan?.x ?? 0;
   const ty = state.pan?.y ?? 0;
   const scale = state.zoom ?? 1;
+  const zoomLevel = Math.max(1, Number(state.zoom) || 1);
   const initialColors = state.initialColors || {};
   const hasActiveHighlights = Object.keys(initialColors).length > 0;
   mapLayer.attr("transform", `translate(${tx}, ${ty}) scale(${scale})`);
@@ -241,12 +320,76 @@ export function renderWorldOutline({ svgEl, topoJson, populationByCountryId = {}
     .attr("fill", (d) => {
       const countryName = d?.properties?.name || "";
       const color = initialColors[getCountryInitial(countryName)];
-      return color || "none";
+      return color || "rgba(0, 0, 0, 0)";
     })
     .attr("stroke", config.strokeColor)
     .attr("stroke-width", config.strokeWidth)
     .attr("data-country-id", (d, i) => String(d?.id ?? `country-${i}`))
     .attr("data-country-name", (d) => d?.properties?.name || "");
+
+  const showCapitals = zoomLevel >= (Number(config.capitalZoomThreshold) || 5);
+  if (showCapitals) {
+    const capitalsData = countriesSelection
+      .data()
+      .map((d, i) => {
+        const countryId = normalizeCountryId(d?.id ?? `country-${i}`);
+        const centroid = path.centroid(d);
+        const populationRecord = populationByCountryId[countryId] || {};
+        const capitalPoint = getCapitalPoint({
+          record: populationRecord,
+          centroid,
+          projection,
+        });
+        if (!capitalPoint) {
+          return null;
+        }
+
+        return {
+          id: countryId || `country-${i}`,
+          name: capitalPoint.name,
+          x: capitalPoint.x,
+          y: capitalPoint.y,
+        };
+      })
+      .filter(Boolean);
+
+    const capitalFontSize = (Number(config.capitalLabelFontSize) || 11) / zoomLevel;
+    const capitalDotRadius = (Number(config.capitalDotRadius) || 2.8) / zoomLevel;
+    const capitalHaloWidth = (Number(config.capitalLabelHaloWidth) || 2.2) / zoomLevel;
+    const labelDx = 5 / zoomLevel;
+
+    const capitalsGroups = capitalsLayer
+      .selectAll("g[data-layer='capital-item']")
+      .data(capitalsData, (d) => d.id)
+      .join("g")
+      .attr("data-layer", "capital-item")
+      .attr("transform", (d) => `translate(${d.x}, ${d.y})`)
+      .style("pointer-events", "none");
+
+    capitalsGroups
+      .selectAll("circle")
+      .data((d) => [d])
+      .join("circle")
+      .attr("r", capitalDotRadius)
+      .attr("fill", config.capitalDotColor);
+
+    capitalsGroups
+      .selectAll("text")
+      .data((d) => [d])
+      .join("text")
+      .attr("x", labelDx)
+      .attr("y", 0)
+      .attr("fill", config.capitalLabelColor)
+      .attr("font-size", capitalFontSize)
+      .attr("font-weight", 600)
+      .attr("dominant-baseline", "central")
+      .attr("paint-order", "stroke")
+      .attr("stroke", config.capitalLabelHaloColor)
+      .attr("stroke-width", capitalHaloWidth)
+      .text((d) => d.name);
+  } else {
+    capitalsLayer.selectAll("g[data-layer='capital-item']").remove();
+  }
 
   if (!hasActiveHighlights) {
     circlesLayer.selectAll("circle").remove();
@@ -269,7 +412,7 @@ export function renderWorldOutline({ svgEl, topoJson, populationByCountryId = {}
       const populationRecord = populationByCountryId[countryId] || {};
       const populationValue = Number(populationRecord.population);
       const hasPopulation = Number.isFinite(populationValue) && populationValue > 0;
-      const leaderImageUrl = String(populationRecord.leaderImageUrl || "").trim();
+      const leaderImageUrl = sanitizeLeaderImageUrl(populationRecord.leaderImageUrl, config.allowedLeaderImageHosts);
 
       return {
         id: countryId || `country-${i}`,
@@ -335,6 +478,7 @@ export function renderWorldOutline({ svgEl, topoJson, populationByCountryId = {}
   }
 
   const badgeData = highlightedCountryData.filter((d) => d.leaderImageUrl && Number.isFinite(d.x) && Number.isFinite(d.y));
+  const badgeImageWidth = 48 * zoomLevel;
 
   const clipPaths = defsLayer
     .selectAll("clipPath[data-layer='leader-badge-clip']")
@@ -366,8 +510,8 @@ export function renderWorldOutline({ svgEl, topoJson, populationByCountryId = {}
     .attr("width", config.leaderBadgeRadius * 2)
     .attr("height", config.leaderBadgeRadius * 2)
     .attr("preserveAspectRatio", "xMidYMid slice")
-    .attr("href", (d) => d.leaderImageUrl)
-    .attr("xlink:href", (d) => d.leaderImageUrl)
+    .attr("href", (d) => withRequestedImageWidth(d.leaderImageUrl, badgeImageWidth))
+    .attr("xlink:href", (d) => withRequestedImageWidth(d.leaderImageUrl, badgeImageWidth))
     .attr("clip-path", (d) => `url(#${clipPathIdForCountry(d.id)})`)
     .style("pointer-events", "none");
 
@@ -384,5 +528,5 @@ export function renderWorldOutline({ svgEl, topoJson, populationByCountryId = {}
     .style("pointer-events", "none");
 
   const sortedCountryRows = highlightedCountryData.sort((a, b) => a.name.localeCompare(b.name));
-  updateSidePanel(sortedCountryRows, config.populationNumberLocale);
+  updateSidePanel(sortedCountryRows, config);
 }
