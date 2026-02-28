@@ -802,26 +802,137 @@ function setupMapNavigation({ svgEl, state, config, render }) {
   );
 
   let dragState = null;
+  let pinchState = null;
+  const activePointers = new Map();
+
+  const beginDrag = ({ pointerId, clientX, clientY }) => {
+    if ((Number(state.zoom) || 1) <= 1) {
+      return;
+    }
+    dragState = {
+      pointerId,
+      startX: clientX,
+      startY: clientY,
+      lastX: clientX,
+      lastY: clientY,
+      dragging: false,
+      moved: false,
+    };
+  };
+
+  const getTouchPointers = () => Array.from(activePointers.values()).filter((pointer) => pointer.pointerType === "touch");
+
+  const getTwoTouchMetrics = () => {
+    const touches = getTouchPointers();
+    if (touches.length < 2) {
+      return null;
+    }
+    const first = touches[0];
+    const second = touches[1];
+    const dx = second.x - first.x;
+    const dy = second.y - first.y;
+    const distance = Math.hypot(dx, dy);
+    if (!Number.isFinite(distance) || distance <= 0) {
+      return null;
+    }
+    return {
+      distance,
+      centerClientX: (first.x + second.x) / 2,
+      centerClientY: (first.y + second.y) / 2,
+      touches,
+    };
+  };
+
+  const startPinch = () => {
+    const metrics = getTwoTouchMetrics();
+    if (!metrics) {
+      return false;
+    }
+    pinchState = {
+      startDistance: metrics.distance,
+      startZoom: Number(state.zoom) || 1,
+      lastCenter: getSvgPoint(svgEl, metrics.centerClientX, metrics.centerClientY),
+      moved: false,
+    };
+    dragState = null;
+    svgEl.style.cursor = "";
+    return true;
+  };
 
   svgEl.addEventListener("pointerdown", (event) => {
+    activePointers.set(event.pointerId, {
+      pointerId: event.pointerId,
+      pointerType: event.pointerType || "mouse",
+      x: event.clientX,
+      y: event.clientY,
+    });
+
+    if (event.pointerType === "touch") {
+      if (svgEl.setPointerCapture) {
+        try {
+          svgEl.setPointerCapture(event.pointerId);
+        } catch {
+          // Ignore capture failures on unsupported browsers.
+        }
+      }
+
+      if (!startPinch()) {
+        beginDrag({
+          pointerId: event.pointerId,
+          clientX: event.clientX,
+          clientY: event.clientY,
+        });
+      }
+      return;
+    }
+
     if ((Number(state.zoom) || 1) <= 1) {
       return;
     }
     if (event.button !== 0) {
       return;
     }
-    dragState = {
+    beginDrag({
       pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      lastX: event.clientX,
-      lastY: event.clientY,
-      dragging: false,
-      moved: false,
-    };
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
   });
 
   svgEl.addEventListener("pointermove", (event) => {
+    if (activePointers.has(event.pointerId)) {
+      activePointers.set(event.pointerId, {
+        pointerId: event.pointerId,
+        pointerType: event.pointerType || activePointers.get(event.pointerId).pointerType || "mouse",
+        x: event.clientX,
+        y: event.clientY,
+      });
+    }
+
+    if (pinchState) {
+      const metrics = getTwoTouchMetrics();
+      if (!metrics) {
+        return;
+      }
+
+      const centerPoint = getSvgPoint(svgEl, metrics.centerClientX, metrics.centerClientY);
+      const nextZoom = pinchState.startZoom * (metrics.distance / pinchState.startDistance);
+      let changed = zoomAroundPoint(nextZoom, centerPoint);
+
+      const dx = centerPoint.x - pinchState.lastCenter.x;
+      const dy = centerPoint.y - pinchState.lastCenter.y;
+      if ((Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) && panBy(dx, dy)) {
+        changed = true;
+      }
+
+      pinchState.lastCenter = centerPoint;
+      pinchState.moved = pinchState.moved || changed;
+      if (changed) {
+        render();
+      }
+      return;
+    }
+
     if (!dragState || dragState.pointerId !== event.pointerId) {
       return;
     }
@@ -831,8 +942,16 @@ function setupMapNavigation({ svgEl, state, config, render }) {
     if (!dragState.dragging && Math.abs(totalDx) + Math.abs(totalDy) > 3) {
       dragState.dragging = true;
       dragState.moved = true;
-      svgEl.setPointerCapture(event.pointerId);
-      svgEl.style.cursor = "grabbing";
+      if (svgEl.setPointerCapture) {
+        try {
+          svgEl.setPointerCapture(event.pointerId);
+        } catch {
+          // Ignore capture failures on unsupported browsers.
+        }
+      }
+      if (event.pointerType !== "touch") {
+        svgEl.style.cursor = "grabbing";
+      }
     }
 
     if (!dragState.dragging) {
@@ -848,22 +967,49 @@ function setupMapNavigation({ svgEl, state, config, render }) {
     }
   });
 
-  const endDrag = (event) => {
-    if (!dragState || dragState.pointerId !== event.pointerId) {
-      return;
+  const endPointerInteraction = (event) => {
+    activePointers.delete(event.pointerId);
+
+    if (pinchState) {
+      const remainingTouches = getTouchPointers();
+      if (remainingTouches.length < 2) {
+        if (pinchState.moved) {
+          svgEl.dataset.suppressCountryClickUntil = String(Date.now() + 260);
+        }
+        pinchState = null;
+
+        if (remainingTouches.length === 1) {
+          const remaining = remainingTouches[0];
+          beginDrag({
+            pointerId: remaining.pointerId,
+            clientX: remaining.x,
+            clientY: remaining.y,
+          });
+        }
+      }
     }
-    if (dragState.moved) {
-      svgEl.dataset.suppressCountryClickUntil = String(Date.now() + 220);
+
+    if (dragState && dragState.pointerId === event.pointerId) {
+      if (dragState.moved) {
+        svgEl.dataset.suppressCountryClickUntil = String(Date.now() + 220);
+      }
+      dragState = null;
+      svgEl.style.cursor = "";
     }
-    dragState = null;
-    svgEl.style.cursor = "";
-    if (svgEl.hasPointerCapture(event.pointerId)) {
-      svgEl.releasePointerCapture(event.pointerId);
+
+    if (svgEl.releasePointerCapture) {
+      try {
+        if (svgEl.hasPointerCapture(event.pointerId)) {
+          svgEl.releasePointerCapture(event.pointerId);
+        }
+      } catch {
+        // Ignore capture release failures on unsupported browsers.
+      }
     }
   };
 
-  svgEl.addEventListener("pointerup", endDrag);
-  svgEl.addEventListener("pointercancel", endDrag);
+  svgEl.addEventListener("pointerup", endPointerInteraction);
+  svgEl.addEventListener("pointercancel", endPointerInteraction);
 
   return updateZoomUi;
 }

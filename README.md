@@ -69,6 +69,7 @@ Then open `http://localhost:8000` in a browser.
 - Use `+` and `−` buttons on the map to zoom in/out.
 - Use `Reset` to return to default view.
 - Mouse wheel or trackpad over the map also zooms toward pointer position.
+- On touch devices, pinch with two fingers to zoom in/out.
 - Drag the map while zoomed-in to pan.
 - At `500%` zoom and above, capital city labels appear on the map (for example, United States -> Washington, D.C.).
 - The map is SVG, so outlines/text stay crisp while zooming; leader photos request larger thumbnails as zoom increases.
