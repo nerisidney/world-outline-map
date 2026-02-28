@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://commons.wikimedia.org https://upload.wikimedia.org; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://commons.wikimedia.org https://upload.wikimedia.org; connect-src 'self' https://en.wikipedia.org; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'none'"
     />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <title>World Outline Map</title>
@@ -32,8 +32,34 @@
           <p id="country-popup-population" class="country-popup-population">Population: N/A</p>
           <p id="country-popup-leader" class="country-popup-leader">Leader: N/A</p>
         </aside>
+        <aside id="city-popup" class="country-popup city-popup" hidden aria-hidden="true">
+          <button id="city-popup-close" class="country-popup-close" type="button" aria-label="Close city details">×</button>
+          <div class="country-popup-header">
+            <h3 id="city-popup-name" class="country-popup-name">City</h3>
+          </div>
+          <img id="city-popup-image" class="country-popup-leader-image city-popup-image" alt="" hidden />
+          <p id="city-popup-population" class="country-popup-population">City population: N/A</p>
+          <p id="city-popup-summary" class="city-popup-summary">No city summary available.</p>
+        </aside>
       </section>
       <aside class="side-panel" aria-live="polite">
+        <section class="game-panel" aria-label="Alphabet game mode">
+          <div class="game-panel-head">
+            <h2 class="game-panel-title">Alphabet Game</h2>
+            <span class="game-panel-state" data-role="game-status">Idle</span>
+          </div>
+          <p class="game-panel-task" data-role="game-task">Press Start to begin a timed round.</p>
+          <div class="game-stats">
+            <p class="game-stat"><span class="game-stat-label">Time</span><strong data-role="game-time">120s</strong></p>
+            <p class="game-stat"><span class="game-stat-label">Score</span><strong data-role="game-score">0</strong></p>
+            <p class="game-stat"><span class="game-stat-label">Best</span><strong data-role="game-best-score">0</strong></p>
+          </div>
+          <p class="game-panel-message" data-role="game-message">Find countries by clicking on the map.</p>
+          <div class="game-actions">
+            <button class="game-btn game-btn-start" type="button" data-action="game-start">Start</button>
+            <button class="game-btn game-btn-stop" type="button" data-action="game-stop" disabled>Stop</button>
+          </div>
+        </section>
         <h2 class="side-panel-title">Highlighted Countries</h2>
         <p class="side-panel-subtitle">Press letters to add groups. Press Space to reset.</p>
         <ul id="highlighted-country-list" class="country-list" data-role="highlighted-country-list">
@@ -52,6 +78,23 @@
         Highlighted Countries
       </button>
       <div class="mobile-bottom-sheet-content">
+        <section class="game-panel game-panel-mobile" aria-label="Alphabet game mode">
+          <div class="game-panel-head">
+            <h2 class="game-panel-title">Alphabet Game</h2>
+            <span class="game-panel-state" data-role="game-status">Idle</span>
+          </div>
+          <p class="game-panel-task" data-role="game-task">Tap Start to begin a timed round.</p>
+          <div class="game-stats">
+            <p class="game-stat"><span class="game-stat-label">Time</span><strong data-role="game-time">120s</strong></p>
+            <p class="game-stat"><span class="game-stat-label">Score</span><strong data-role="game-score">0</strong></p>
+            <p class="game-stat"><span class="game-stat-label">Best</span><strong data-role="game-best-score">0</strong></p>
+          </div>
+          <p class="game-panel-message" data-role="game-message">Find countries by tapping on the map.</p>
+          <div class="game-actions">
+            <button class="game-btn game-btn-start" type="button" data-action="game-start">Start</button>
+            <button class="game-btn game-btn-stop" type="button" data-action="game-stop" disabled>Stop</button>
+          </div>
+        </section>
         <ul id="mobile-highlighted-country-list" class="country-list" data-role="highlighted-country-list">
           <li class="country-list-empty">No countries highlighted.</li>
         </ul>

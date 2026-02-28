@@ -18,20 +18,42 @@ Then open `http://localhost:8000` in a browser.
 - Each new letter gets the next color in the palette (cycling through colors).
 - Active groups stay visible together until reset.
 - Active countries are labeled with black text and flag emoji when available.
+- Country names are shown as `English / Native` when the native name differs.
 - Active countries can show leader photo badges to the left of map labels when leader images are available.
 - Active countries with known population show log-scaled circles sized from `log10(population)`.
 - The side panel lists all highlighted countries and colors each name to match the map fill.
 - The side panel shows exact population values (or `N/A`) and appends flag emoji after country names when available.
+- Sidebar country rows use the same `English / Native` name format.
 - Sidebar rows show leader name and role text, with thumbnail when available.
 - Press `Space` to clear all highlights, circles, labels, and sidebar values.
 - A bilingual instruction banner is shown at the bottom (English + Hebrew).
+
+## Alphabet Game Mode
+
+- Press `Start` in the side panel (or mobile bottom sheet) to begin a timed round.
+- Each round picks one target letter and asks you to find countries that start with that letter.
+- Goal: find up to `10` matching countries before time runs out.
+- The game panel shows current score and your best score (saved locally in the browser).
+- Click countries on the map to submit guesses.
+- Correct guess: score increases and streak increases.
+- Wrong guess: score penalty and streak resets.
+- Winning grants a small bonus based on remaining time.
+- `Stop` resets the round state.
+- `Space` also resets the round state and clears game coloring.
+- During an active round, country/capital popups are temporarily disabled so clicks count only as game guesses.
 
 ## Country Popup
 
 - The popup appears over the map area (not over the sidebar).
 - Click any country on the map, or click any highlighted country row in the sidebar/mobile list, to open details.
-- Popup content includes country name + flag, population, leader name/role, and leader photo (when available).
+- Popup content includes bilingual country name (`English / Native`) + flag, population, leader name/role, and leader photo (when available).
 - Close the popup with the `×` button or the `Esc` key.
+
+## Capital City Popup
+
+- At `500%` zoom and above, click a capital city label/dot to open a city popup.
+- City popup content is in English and includes: city name, city population (when available), city photo (when available), and a short English summary.
+- If the summary is not already in local data, it is fetched from English Wikipedia on demand.
 
 ## Mobile Controls
 
@@ -54,6 +76,7 @@ Then open `http://localhost:8000` in a browser.
 ## Security Notes
 
 - A `Content-Security-Policy` meta policy is set in `index.html` to restrict scripts, images, and network connections.
+- `connect-src` explicitly allows only `self` and `https://en.wikipedia.org` (for on-demand city summaries).
 - Leader image URLs are validated to HTTPS and host-whitelisted (`commons.wikimedia.org`, `upload.wikimedia.org`) in both data build and runtime rendering paths.
 - Leader thumbnails use `referrerPolicy="no-referrer"`.
 - User-supplied HTML is not injected into the DOM (`textContent` is used for dynamic labels/text).

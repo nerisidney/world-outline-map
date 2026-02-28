@@ -10,6 +10,13 @@ function normalizeCountryId(countryId) {
   return raw;
 }
 
+function getCountryInitial(countryName) {
+  return String(countryName || "")
+    .trim()
+    .toLowerCase()
+    .charAt(0);
+}
+
 function formatLeaderRole(role) {
   if (!role) {
     return "";
@@ -38,7 +45,37 @@ function sanitizeLeaderImageUrl(imageUrl, allowedHosts = []) {
   }
 }
 
-function setupCountryPopup({ svgEl, populationByCountryId, locale, allowedImageHosts }) {
+function withRequestedImageWidth(imageUrl, width) {
+  const normalizedUrl = String(imageUrl || "").trim();
+  if (!normalizedUrl) {
+    return "";
+  }
+
+  try {
+    const url = new URL(normalizedUrl, window.location.href);
+    url.searchParams.set("width", String(Math.max(64, Math.round(width))));
+    return url.toString();
+  } catch {
+    return normalizedUrl;
+  }
+}
+
+function composeDisplayName(englishName, nativeName) {
+  const baseEnglish = String(englishName || "").trim();
+  const baseNative = String(nativeName || "").trim();
+  if (!baseEnglish) {
+    return baseNative;
+  }
+  if (!baseNative) {
+    return baseEnglish;
+  }
+  if (baseEnglish.toLowerCase() === baseNative.toLowerCase()) {
+    return baseEnglish;
+  }
+  return `${baseEnglish} / ${baseNative}`;
+}
+
+function setupCountryPopup({ svgEl, populationByCountryId, locale, allowedImageHosts, popupImageWidth, isGameActive = () => false }) {
   const popup = document.querySelector("#country-popup");
   const closeBtn = document.querySelector("#country-popup-close");
   const nameEl = document.querySelector("#country-popup-name");
@@ -60,7 +97,9 @@ function setupCountryPopup({ svgEl, populationByCountryId, locale, allowedImageH
   const openPopup = ({ countryId, countryName }) => {
     const record = populationByCountryId[countryId] || {};
     const flag = record.flagEmoji ? ` ${record.flagEmoji}` : "";
-    const displayName = countryName || record.name || "Unknown country";
+    const englishName = countryName || record.name || "Unknown country";
+    const nativeName = String(record.nativeName || "").trim();
+    const displayName = composeDisplayName(englishName, nativeName);
     nameEl.textContent = `${displayName}${flag}`;
 
     const populationValue = Number(record.population);
@@ -79,13 +118,20 @@ function setupCountryPopup({ svgEl, populationByCountryId, locale, allowedImageH
 
     const imageUrl = sanitizeLeaderImageUrl(record.leaderImageUrl, allowedImageHosts);
     if (imageUrl) {
-      leaderImg.src = imageUrl;
+      leaderImg.src = withRequestedImageWidth(imageUrl, popupImageWidth || 420);
       leaderImg.alt = record.leaderName ? `${record.leaderName} portrait` : `${displayName} leader portrait`;
+      leaderImg.referrerPolicy = "no-referrer";
       leaderImg.hidden = false;
     } else {
       leaderImg.hidden = true;
       leaderImg.removeAttribute("src");
       leaderImg.alt = "";
+    }
+
+    const cityPopup = document.querySelector("#city-popup");
+    if (cityPopup) {
+      cityPopup.hidden = true;
+      cityPopup.setAttribute("aria-hidden", "true");
     }
 
     popup.hidden = false;
@@ -125,6 +171,9 @@ function setupCountryPopup({ svgEl, populationByCountryId, locale, allowedImageH
   });
 
   document.addEventListener("click", (event) => {
+    if (isGameActive()) {
+      return;
+    }
     const countryDetails = getPopupCountryFromTarget(event.target);
     if (!countryDetails?.countryId) {
       return;
@@ -133,6 +182,9 @@ function setupCountryPopup({ svgEl, populationByCountryId, locale, allowedImageH
   });
 
   document.addEventListener("keydown", (event) => {
+    if (isGameActive()) {
+      return;
+    }
     const listItem = event.target?.closest?.(".country-list-item[data-country-id]");
     if (!listItem) {
       return;
@@ -150,6 +202,447 @@ function setupCountryPopup({ svgEl, populationByCountryId, locale, allowedImageH
     }
     openPopup({ countryId, countryName });
   });
+}
+
+function setupCityPopup({ svgEl, populationByCountryId, locale, allowedImageHosts, popupImageWidth, isGameActive = () => false }) {
+  const popup = document.querySelector("#city-popup");
+  const closeBtn = document.querySelector("#city-popup-close");
+  const nameEl = document.querySelector("#city-popup-name");
+  const popEl = document.querySelector("#city-popup-population");
+  const summaryEl = document.querySelector("#city-popup-summary");
+  const cityImg = document.querySelector("#city-popup-image");
+
+  if (!popup || !closeBtn || !nameEl || !popEl || !summaryEl || !cityImg) {
+    return;
+  }
+
+  const numberFormatter = new Intl.NumberFormat(locale || "en-US");
+  const citySummaryCache = new Map();
+  let openCityToken = "";
+
+  const trimSummary = (text, maxChars = 340) => {
+    const normalized = String(text || "").replace(/\s+/g, " ").trim();
+    if (!normalized) {
+      return "";
+    }
+    if (normalized.length <= maxChars) {
+      return normalized;
+    }
+    return `${normalized.slice(0, maxChars - 1).trim()}…`;
+  };
+
+  const fetchCitySummary = async (wikiTitle) => {
+    const normalizedTitle = String(wikiTitle || "").trim();
+    if (!normalizedTitle) {
+      return { summary: "", imageUrl: "" };
+    }
+    if (citySummaryCache.has(normalizedTitle)) {
+      return citySummaryCache.get(normalizedTitle);
+    }
+
+    const safeTitle = encodeURIComponent(normalizedTitle.replace(/\s+/g, "_"));
+    const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${safeTitle}`;
+    try {
+      const response = await fetch(summaryUrl, {
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) {
+        throw new Error(`Wikipedia summary fetch failed: ${response.status}`);
+      }
+      const payload = await response.json();
+      const summaryText = trimSummary(payload?.extract || "");
+      const imageUrl = sanitizeLeaderImageUrl(payload?.thumbnail?.source || "", allowedImageHosts);
+      const resolved = { summary: summaryText, imageUrl };
+      citySummaryCache.set(normalizedTitle, resolved);
+      return resolved;
+    } catch {
+      const fallback = { summary: "", imageUrl: "" };
+      citySummaryCache.set(normalizedTitle, fallback);
+      return fallback;
+    }
+  };
+
+  const closePopup = () => {
+    popup.hidden = true;
+    popup.setAttribute("aria-hidden", "true");
+  };
+
+  const openPopup = async ({ countryId, cityName, countryName }) => {
+    const record = populationByCountryId[countryId] || {};
+    const displayCity = String(cityName || record.capital || "").trim() || "Unknown city";
+    const displayCountry = String(countryName || record.name || "this country").trim();
+    openCityToken = `${countryId}:${displayCity}:${Date.now()}`;
+    const token = openCityToken;
+    nameEl.textContent = displayCity;
+
+    const cityPopulationValue = Number(record.capitalPopulation);
+    if (Number.isFinite(cityPopulationValue) && cityPopulationValue > 0) {
+      popEl.textContent = `City population: ${numberFormatter.format(cityPopulationValue)}`;
+    } else {
+      popEl.textContent = "City population: N/A";
+    }
+
+    const summaryFromData = trimSummary(String(record.capitalSummaryEn || "").trim());
+    const summaryFallback = `${displayCity} is the capital city of ${displayCountry}.`;
+    summaryEl.textContent = summaryFromData || "Loading summary from Wikipedia…";
+
+    const imageUrl = sanitizeLeaderImageUrl(record.capitalImageUrl, allowedImageHosts);
+    if (imageUrl) {
+      cityImg.src = withRequestedImageWidth(imageUrl, popupImageWidth || 520);
+      cityImg.alt = `${displayCity} city view`;
+      cityImg.referrerPolicy = "no-referrer";
+      cityImg.hidden = false;
+    } else {
+      cityImg.hidden = true;
+      cityImg.removeAttribute("src");
+      cityImg.alt = "";
+    }
+
+    const countryPopup = document.querySelector("#country-popup");
+    if (countryPopup) {
+      countryPopup.hidden = true;
+      countryPopup.setAttribute("aria-hidden", "true");
+    }
+
+    popup.hidden = false;
+    popup.setAttribute("aria-hidden", "false");
+
+    if (summaryFromData) {
+      return;
+    }
+
+    const wikiTitle = String(record.capitalWikiTitle || displayCity).trim();
+    const wikiDetails = await fetchCitySummary(wikiTitle);
+    if (openCityToken !== token) {
+      return;
+    }
+
+    summaryEl.textContent = wikiDetails.summary || summaryFallback;
+    if (!cityImg.hidden) {
+      return;
+    }
+    if (!wikiDetails.imageUrl) {
+      return;
+    }
+    cityImg.src = withRequestedImageWidth(wikiDetails.imageUrl, popupImageWidth || 520);
+    cityImg.alt = `${displayCity} city view`;
+    cityImg.referrerPolicy = "no-referrer";
+    cityImg.hidden = false;
+  };
+
+  closeBtn.addEventListener("click", closePopup);
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closePopup();
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    if (isGameActive()) {
+      return;
+    }
+    const cityNode = event.target?.closest?.("[data-capital-country-id]");
+    if (!cityNode) {
+      return;
+    }
+
+    const countryId = normalizeCountryId(cityNode.getAttribute("data-capital-country-id"));
+    const cityName = String(cityNode.getAttribute("data-capital-name") || "").trim();
+    const countryName = String(cityNode.getAttribute("data-capital-country-name") || "").trim();
+    if (!countryId) {
+      return;
+    }
+
+    void openPopup({ countryId, cityName, countryName });
+  });
+}
+
+function setupGameMode({ svgEl, state, render, config, actions }) {
+  const statusEls = Array.from(document.querySelectorAll("[data-role='game-status']"));
+  const taskEls = Array.from(document.querySelectorAll("[data-role='game-task']"));
+  const timeEls = Array.from(document.querySelectorAll("[data-role='game-time']"));
+  const scoreEls = Array.from(document.querySelectorAll("[data-role='game-score']"));
+  const bestScoreEls = Array.from(document.querySelectorAll("[data-role='game-best-score']"));
+  const messageEls = Array.from(document.querySelectorAll("[data-role='game-message']"));
+  const startBtns = Array.from(document.querySelectorAll("[data-action='game-start']"));
+  const stopBtns = Array.from(document.querySelectorAll("[data-action='game-stop']"));
+  const bestScoreStorageKey = "worldMapGameBestScore";
+
+  const roundSeconds = Math.max(15, Number(config.gameRoundSeconds) || 120);
+  const maxTargetCount = Math.max(1, Number(config.gameTargetCount) || 10);
+  const correctScore = Math.max(1, Number(config.gameCorrectScore) || 10);
+  const wrongPenalty = Math.max(0, Number(config.gameWrongPenalty) || 4);
+  const streakBonus = Math.max(0, Number(config.gameStreakBonus) || 2);
+  const winTimeBonusPerSecond = Math.max(0, Number(config.gameWinTimeBonusPerSecond) || 1);
+
+  let timerId = null;
+  try {
+    const storedBest = Number(window.localStorage.getItem(bestScoreStorageKey) || 0);
+    if (Number.isFinite(storedBest) && storedBest > 0) {
+      state.gameBestScore = Math.max(Number(state.gameBestScore || 0), Math.round(storedBest));
+    }
+  } catch {
+    // Ignore storage read failures.
+  }
+
+  const setText = (nodes, text) => {
+    for (const node of nodes) {
+      node.textContent = text;
+    }
+  };
+
+  const toSecondsLabel = (seconds) => `${Math.max(0, Math.round(seconds))}s`;
+
+  const getStatusLabel = () => {
+    if (state.gameActive) {
+      return "Running";
+    }
+    if (state.gameStatus === "won") {
+      return "Won";
+    }
+    if (state.gameStatus === "lost") {
+      return "Time Up";
+    }
+    return "Idle";
+  };
+
+  const syncUi = () => {
+    const targetLetter = String(state.gameTargetLetter || "").toUpperCase();
+    const taskText = state.gameActive
+      ? `Find ${state.gameRequiredCount} countries that start with "${targetLetter}".`
+      : "Press Start to begin a timed round.";
+    setText(taskEls, taskText);
+    setText(statusEls, getStatusLabel());
+    const timeValue = Number.isFinite(Number(state.gameTimeRemaining)) ? Number(state.gameTimeRemaining) : roundSeconds;
+    setText(timeEls, toSecondsLabel(timeValue));
+    setText(scoreEls, String(Math.max(0, Math.round(state.gameScore || 0))));
+    setText(bestScoreEls, String(Math.max(0, Math.round(state.gameBestScore || 0))));
+    setText(messageEls, String(state.gameMessage || "Find countries by clicking on the map."));
+
+    for (const btn of startBtns) {
+      btn.disabled = state.gameActive;
+      btn.textContent = state.gameActive ? "Running..." : "Start";
+    }
+    const canReset = state.gameActive || (state.gameStatus && state.gameStatus !== "idle");
+    for (const btn of stopBtns) {
+      btn.disabled = !canReset;
+    }
+  };
+
+  const stopTimer = () => {
+    if (timerId !== null) {
+      window.clearInterval(timerId);
+      timerId = null;
+    }
+  };
+
+  const updateBestScore = () => {
+    const currentScore = Math.max(0, Math.round(Number(state.gameScore || 0)));
+    const previousBest = Math.max(0, Math.round(Number(state.gameBestScore || 0)));
+    if (currentScore <= previousBest) {
+      return;
+    }
+    state.gameBestScore = currentScore;
+    try {
+      window.localStorage.setItem(bestScoreStorageKey, String(currentScore));
+    } catch {
+      // Ignore storage write failures.
+    }
+  };
+
+  const resetRoundState = (message = "") => {
+    state.gameActive = false;
+    state.gameStatus = "idle";
+    state.gameTargetLetter = null;
+    state.gameRequiredCount = 0;
+    state.gameTargetCountryIds = {};
+    state.gameFoundCountryIds = {};
+    state.gameScore = 0;
+    state.gameStreak = 0;
+    state.gameBestStreak = 0;
+    state.gameFoundCount = 0;
+    state.gameTimeRemaining = roundSeconds;
+    state.gameMessage = message;
+  };
+
+  const collectCountryCatalog = () => {
+    const byId = new Map();
+    const countryPaths = svgEl.querySelectorAll("path[data-country-id]");
+    for (const path of countryPaths) {
+      const id = normalizeCountryId(path.getAttribute("data-country-id"));
+      const name = String(path.getAttribute("data-country-name") || "").trim();
+      const initial = getCountryInitial(name);
+      if (!id || !name || !/^[a-z]$/.test(initial)) {
+        continue;
+      }
+      byId.set(id, { id, name, initial });
+    }
+    return Array.from(byId.values());
+  };
+
+  const pickTargetRound = () => {
+    const countryCatalog = collectCountryCatalog();
+    const letterBuckets = new Map();
+
+    for (const country of countryCatalog) {
+      if (!letterBuckets.has(country.initial)) {
+        letterBuckets.set(country.initial, []);
+      }
+      letterBuckets.get(country.initial).push(country);
+    }
+
+    const entries = Array.from(letterBuckets.entries())
+      .filter((entry) => entry[1].length > 0)
+      .sort((a, b) => b[1].length - a[1].length);
+    if (entries.length === 0) {
+      return null;
+    }
+
+    const pool = entries;
+    const [targetLetter, countries] = pool[Math.floor(Math.random() * pool.length)];
+    return {
+      targetLetter,
+      countries,
+      requiredCount: Math.min(maxTargetCount, countries.length),
+    };
+  };
+
+  const startRound = () => {
+    stopTimer();
+    actions.clearHighlights();
+
+    const round = pickTargetRound();
+    if (!round) {
+      resetRoundState("No countries are available for a game round.");
+      render();
+      return;
+    }
+
+    state.gameActive = true;
+    state.gameStatus = "running";
+    state.gameTargetLetter = round.targetLetter;
+    state.gameRequiredCount = round.requiredCount;
+    state.gameTargetCountryIds = Object.fromEntries(round.countries.map((country) => [country.id, true]));
+    state.gameFoundCountryIds = {};
+    state.gameScore = 0;
+    state.gameStreak = 0;
+    state.gameBestStreak = 0;
+    state.gameFoundCount = 0;
+    state.gameTimeRemaining = roundSeconds;
+    state.gameMessage = `Click countries that start with "${round.targetLetter.toUpperCase()}".`;
+    render();
+
+    timerId = window.setInterval(() => {
+      if (!state.gameActive) {
+        stopTimer();
+        return;
+      }
+      const nextTime = Math.max(0, Number(state.gameTimeRemaining || 0) - 1);
+      state.gameTimeRemaining = nextTime;
+      if (nextTime <= 0) {
+        state.gameActive = false;
+        state.gameStatus = "lost";
+        state.gameStreak = 0;
+        state.gameMessage = `Time up. You found ${state.gameFoundCount}/${state.gameRequiredCount}.`;
+        stopTimer();
+        render();
+        return;
+      }
+      syncUi();
+    }, 1000);
+  };
+
+  const resetRound = () => {
+    const hadRoundState =
+      state.gameActive ||
+      (state.gameStatus && state.gameStatus !== "idle") ||
+      Object.keys(state.gameFoundCountryIds || {}).length > 0 ||
+      Number(state.gameScore || 0) > 0;
+    stopTimer();
+    resetRoundState("Round reset.");
+    render();
+    return hadRoundState;
+  };
+
+  const processCountryGuess = ({ countryId, countryName }) => {
+    if (!state.gameActive) {
+      return;
+    }
+
+    if (!countryId || !state.gameTargetCountryIds[countryId]) {
+      state.gameStreak = 0;
+      state.gameScore = Math.max(0, Number(state.gameScore || 0) - wrongPenalty);
+      state.gameMessage = `${countryName || "That country"} does not match "${String(state.gameTargetLetter || "").toUpperCase()}". Streak reset.`;
+      render();
+      return;
+    }
+
+    if (state.gameFoundCountryIds[countryId]) {
+      state.gameMessage = `${countryName || "This country"} is already counted.`;
+      syncUi();
+      return;
+    }
+
+    state.gameFoundCountryIds[countryId] = true;
+    state.gameFoundCount = Number(state.gameFoundCount || 0) + 1;
+    state.gameStreak = Number(state.gameStreak || 0) + 1;
+    state.gameBestStreak = Math.max(Number(state.gameBestStreak || 0), state.gameStreak);
+
+    const points = correctScore + Math.max(0, state.gameStreak - 1) * streakBonus;
+    state.gameScore = Number(state.gameScore || 0) + points;
+    updateBestScore();
+    state.gameMessage = `Correct: ${countryName || "Country"} (+${points}). Streak: ${state.gameStreak}.`;
+
+    if (state.gameFoundCount >= state.gameRequiredCount) {
+      const timeBonus = Math.round(Math.max(0, Number(state.gameTimeRemaining || 0)) * winTimeBonusPerSecond);
+      state.gameScore += timeBonus;
+      updateBestScore();
+      state.gameActive = false;
+      state.gameStatus = "won";
+      state.gameMessage = `You won! ${state.gameFoundCount}/${state.gameRequiredCount} found. Time bonus: +${timeBonus}.`;
+      stopTimer();
+    }
+
+    render();
+  };
+
+  for (const btn of startBtns) {
+    btn.addEventListener("click", startRound);
+  }
+  for (const btn of stopBtns) {
+    btn.addEventListener("click", resetRound);
+  }
+
+  document.addEventListener("click", (event) => {
+    if (!state.gameActive) {
+      return;
+    }
+    const suppressedUntil = Number(svgEl.dataset.suppressCountryClickUntil || "0");
+    if (Date.now() < suppressedUntil) {
+      return;
+    }
+
+    const mapPath = event.target?.closest?.("path[data-country-id]");
+    if (mapPath && svgEl.contains(mapPath)) {
+      const countryId = normalizeCountryId(mapPath.getAttribute("data-country-id"));
+      const countryName = String(mapPath.getAttribute("data-country-name") || "").trim();
+      processCountryGuess({ countryId, countryName });
+      return;
+    }
+
+    const rowItem = event.target?.closest?.(".country-list-item[data-country-id]");
+    if (rowItem) {
+      const countryId = normalizeCountryId(rowItem.getAttribute("data-country-id"));
+      const countryName = String(rowItem.getAttribute("data-country-name") || "").trim();
+      processCountryGuess({ countryId, countryName });
+    }
+  });
+
+  if (!Number.isFinite(Number(state.gameTimeRemaining)) || Number(state.gameTimeRemaining) <= 0) {
+    state.gameTimeRemaining = roundSeconds;
+  }
+  syncUi();
+  return { syncUi, resetRound };
 }
 
 function clamp(value, min, max) {
@@ -426,7 +919,7 @@ function createHighlightActions(state, palette) {
   return { addInitial, removeInitial, toggleInitial, clearHighlights };
 }
 
-function bindKeyboardEvents({ state, render, actions }) {
+function bindKeyboardEvents({ state, render, actions, onSpaceReset }) {
   void state;
 
   window.addEventListener("keydown", (event) => {
@@ -437,13 +930,18 @@ function bindKeyboardEvents({ state, render, actions }) {
 
     if (event.code === "Space") {
       event.preventDefault();
-      if (actions.clearHighlights()) {
+      const clearedHighlights = actions.clearHighlights();
+      const clearedRound = typeof onSpaceReset === "function" ? onSpaceReset() : false;
+      if (clearedHighlights || clearedRound) {
         render();
       }
       return;
     }
 
     const key = String(event.key || "").toLowerCase();
+    if (state.gameActive) {
+      return;
+    }
     if (/^[a-z]$/.test(key) && actions.addInitial(key)) {
       render();
     }
@@ -506,6 +1004,7 @@ function setupMobileControls({ state, render, actions }) {
 
   return () => {
     const active = state.initialColors || {};
+    const gameActive = Boolean(state.gameActive);
     const buttons = lettersContainer.querySelectorAll(".mobile-letter-btn");
     for (const btn of buttons) {
       const letter = btn.dataset.letter || "";
@@ -513,10 +1012,11 @@ function setupMobileControls({ state, render, actions }) {
       btn.classList.toggle("is-active", isActive);
       btn.style.setProperty("--chip-color", active[letter] || "#1f2a37");
       btn.setAttribute("aria-pressed", String(isActive));
+      btn.disabled = gameActive;
     }
 
     const activeCount = Object.keys(active).length;
-    clearBtn.disabled = activeCount === 0;
+    clearBtn.disabled = gameActive || activeCount === 0;
     listToggleBtn.textContent = activeCount > 0 ? `List (${activeCount})` : "List";
   };
 }
@@ -551,11 +1051,24 @@ export async function initApp(containerEl) {
     populationByCountryId,
     locale: config.populationNumberLocale,
     allowedImageHosts: config.allowedLeaderImageHosts,
+    popupImageWidth: config.leaderPopupImageWidth,
+    isGameActive: () => Boolean(state.gameActive),
+  });
+  setupCityPopup({
+    svgEl: containerEl,
+    populationByCountryId,
+    locale: config.populationNumberLocale,
+    allowedImageHosts: config.allowedLeaderImageHosts,
+    popupImageWidth: config.cityPopupImageWidth,
+    isGameActive: () => Boolean(state.gameActive),
   });
 
   let syncMobileControls = () => {};
   let syncMapNavigation = () => {};
-  const render = () => {
+  let syncGameMode = () => {};
+  let resetGameRound = () => false;
+  let renderFrameId = null;
+  const renderNow = () => {
     renderWorldOutline({
       svgEl: containerEl,
       topoJson,
@@ -563,15 +1076,28 @@ export async function initApp(containerEl) {
       state,
       config,
     });
+    syncGameMode();
     syncMobileControls();
     syncMapNavigation();
   };
+  const render = () => {
+    if (renderFrameId !== null) {
+      return;
+    }
+    renderFrameId = window.requestAnimationFrame(() => {
+      renderFrameId = null;
+      renderNow();
+    });
+  };
 
+  const gameMode = setupGameMode({ svgEl: containerEl, state, render, config, actions });
+  syncGameMode = gameMode.syncUi;
+  resetGameRound = gameMode.resetRound;
   syncMobileControls = setupMobileControls({ state, render, actions });
   syncMapNavigation = setupMapNavigation({ svgEl: containerEl, state, config, render });
-  bindKeyboardEvents({ state, render, actions });
+  bindKeyboardEvents({ state, render, actions, onSpaceReset: resetGameRound });
 
-  render();
+  renderNow();
   window.addEventListener("resize", render);
 
   return { state, render };

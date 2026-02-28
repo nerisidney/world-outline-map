@@ -13,10 +13,14 @@ WB_COUNTRIES_URL = "https://api.worldbank.org/v2/country?format=json&per_page=40
 WB_POPULATION_URL = "https://api.worldbank.org/v2/country/all/indicator/SP.POP.TOTL?format=json&mrv=1&per_page=20000"
 M49_BRIDGE_URL = "https://raw.githubusercontent.com/datasets/country-codes/main/data/country-codes.csv"
 FLAG_EMOJI_URL = "https://cdn.jsdelivr.net/npm/country-flag-emoji-json@2.0.0/dist/by-code.json"
-RESTCOUNTRIES_URL = "https://restcountries.com/v3.1/all?fields=cca3,capital,capitalInfo"
+RESTCOUNTRIES_URL = "https://restcountries.com/v3.1/all?fields=cca3,capital,capitalInfo,name"
 WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql"
 WIKIDATA_TIMEOUT_SECONDS = 45
 ALLOWED_LEADER_IMAGE_HOSTS = {"commons.wikimedia.org", "upload.wikimedia.org"}
+EXCLUDED_ISO3 = {"PSE"}
+NATIVE_NAME_OVERRIDES_BY_ISO3 = {
+    "ISR": "ישראל",
+}
 WIKIDATA_LEADERS_QUERY = """
 SELECT ?iso2 ?hogLabel ?hogImage ?hosLabel ?hosImage WHERE {
   ?country wdt:P297 ?iso2.
@@ -37,6 +41,23 @@ SELECT ?iso2 ?govFormLabel WHERE {
   ?country wdt:P297 ?iso2.
   FILTER(STRLEN(?iso2) = 2)
   OPTIONAL { ?country wdt:P122 ?govForm. }
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+}
+"""
+WIKIDATA_CAPITALS_QUERY = """
+SELECT ?iso3 ?capitalLabel ?capitalPopulation ?capitalImage ?capitalWikiTitle WHERE {
+  ?country wdt:P298 ?iso3.
+  FILTER(STRLEN(?iso3) = 3)
+  OPTIONAL {
+    ?country wdt:P36 ?capital.
+    OPTIONAL { ?capital wdt:P1082 ?capitalPopulation. }
+    OPTIONAL { ?capital wdt:P18 ?capitalImage. }
+    OPTIONAL {
+      ?capitalArticle <http://schema.org/about> ?capital;
+                      <http://schema.org/isPartOf> <https://en.wikipedia.org/>;
+                      <http://schema.org/name> ?capitalWikiTitle.
+    }
+  }
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
 }
 """
@@ -221,6 +242,67 @@ def sanitize_leader_image_url(raw_url: str, width: int = 48) -> str:
     return to_thumbnail_url(normalized_url, width=width)
 
 
+def sanitize_city_image_url(raw_url: str, width: int = 320) -> str:
+    normalized_url = raw_url.replace("http://", "https://", 1).strip()
+    if not normalized_url:
+        return ""
+
+    try:
+        url_parts = urlsplit(normalized_url)
+    except Exception:
+        return ""
+
+    if url_parts.scheme != "https":
+        return ""
+    if (url_parts.hostname or "").lower() not in ALLOWED_LEADER_IMAGE_HOSTS:
+        return ""
+
+    return to_thumbnail_url(normalized_url, width=width)
+
+
+def fetch_wikidata_capital_metadata_by_iso3() -> dict[str, dict]:
+    params = urlencode({"query": WIKIDATA_CAPITALS_QUERY})
+    request = Request(
+        f"{WIKIDATA_SPARQL_URL}?{params}",
+        headers={
+            "Accept": "application/sparql-results+json",
+            "User-Agent": "world-outline-map-data-builder/1.0 (https://query.wikidata.org/)",
+        },
+    )
+
+    with urlopen(request, timeout=WIKIDATA_TIMEOUT_SECONDS) as response:
+        payload = json.load(response)
+
+    bindings = payload.get("results", {}).get("bindings", [])
+    capitals_by_iso3: dict[str, dict] = {}
+    for row in bindings:
+        iso3 = str(row.get("iso3", {}).get("value", "")).strip().upper()
+        if len(iso3) != 3 or iso3 in EXCLUDED_ISO3:
+            continue
+
+        capital_name = str(row.get("capitalLabel", {}).get("value", "")).strip()
+        wiki_title = str(row.get("capitalWikiTitle", {}).get("value", "")).strip()
+        image_from_wikidata = sanitize_city_image_url(str(row.get("capitalImage", {}).get("value", "")).strip(), width=480)
+
+        population_value = None
+        raw_population = str(row.get("capitalPopulation", {}).get("value", "")).strip()
+        if raw_population:
+            try:
+                population_value = int(float(raw_population))
+            except (TypeError, ValueError):
+                population_value = None
+
+        capitals_by_iso3[iso3] = {
+            "capitalName": capital_name,
+            "capitalPopulation": population_value,
+            "capitalImageUrl": image_from_wikidata,
+            "capitalSummaryEn": "",
+            "capitalWikiTitle": wiki_title,
+        }
+
+    return capitals_by_iso3
+
+
 def parse_bridge(csv_text: str) -> tuple[dict[str, str], dict[str, str]]:
     rows = csv.DictReader(csv_text.splitlines())
     iso3_to_m49: dict[str, str] = {}
@@ -307,6 +389,32 @@ def build_capitals_by_iso3(restcountries_payload) -> dict[str, dict]:
     return capitals_by_iso3
 
 
+def build_native_names_by_iso3(restcountries_payload) -> dict[str, str]:
+    native_names_by_iso3: dict[str, str] = {}
+
+    for row in restcountries_payload:
+        iso3 = str(row.get("cca3", "")).strip().upper()
+        if len(iso3) != 3:
+            continue
+
+        name_block = row.get("name") or {}
+        native_block = name_block.get("nativeName") or {}
+        native_name = ""
+
+        if isinstance(native_block, dict):
+            for value in native_block.values():
+                if not isinstance(value, dict):
+                    continue
+                candidate = str(value.get("common", "")).strip()
+                if candidate:
+                    native_name = candidate
+                    break
+
+        native_names_by_iso3[iso3] = NATIVE_NAME_OVERRIDES_BY_ISO3.get(iso3, native_name)
+
+    return native_names_by_iso3
+
+
 def build_population_snapshot() -> dict[str, dict]:
     countries_payload = fetch_json(WB_COUNTRIES_URL)
     populations_payload = fetch_json(WB_POPULATION_URL)
@@ -315,6 +423,8 @@ def build_population_snapshot() -> dict[str, dict]:
     bridge_csv_text = fetch_text(M49_BRIDGE_URL)
     leaders_by_iso2 = fetch_wikidata_leaders()
     capitals_by_iso3 = build_capitals_by_iso3(restcountries_payload)
+    native_names_by_iso3 = build_native_names_by_iso3(restcountries_payload)
+    capital_metadata_by_iso3 = fetch_wikidata_capital_metadata_by_iso3()
 
     countries = countries_payload[1]
     populations = populations_payload[1]
@@ -325,7 +435,7 @@ def build_population_snapshot() -> dict[str, dict]:
     for country in countries:
         iso3 = str(country.get("id", "")).upper().strip()
         region_name = str(country.get("region", {}).get("value", "")).strip()
-        if len(iso3) != 3 or region_name == "Aggregates":
+        if len(iso3) != 3 or region_name == "Aggregates" or iso3 in EXCLUDED_ISO3:
             continue
         non_aggregate_iso3.add(iso3)
         iso3_country_names[iso3] = str(country.get("name", "")).strip()
@@ -333,7 +443,7 @@ def build_population_snapshot() -> dict[str, dict]:
     latest_population_by_iso3: dict[str, dict] = {}
     for row in populations:
         iso3 = str(row.get("countryiso3code", "")).upper().strip()
-        if iso3 not in non_aggregate_iso3:
+        if iso3 not in non_aggregate_iso3 or iso3 in EXCLUDED_ISO3:
             continue
 
         value = row.get("value")
@@ -357,7 +467,20 @@ def build_population_snapshot() -> dict[str, dict]:
         }
 
     population_by_country_id: dict[str, dict] = {}
-    for iso3, record in latest_population_by_iso3.items():
+    for iso3 in sorted(non_aggregate_iso3):
+        if iso3 in EXCLUDED_ISO3:
+            continue
+
+        record = latest_population_by_iso3.get(
+            iso3,
+            {
+                "iso3": iso3,
+                "name": iso3_country_names.get(iso3, ""),
+                "population": None,
+                "year": None,
+            },
+        )
+
         m49_code = iso3_to_m49.get(iso3)
         if not m49_code:
             continue
@@ -370,9 +493,15 @@ def build_population_snapshot() -> dict[str, dict]:
             **record,
             "iso2": iso2_code or "",
             "flagEmoji": flag_emoji,
-            "capital": (capitals_by_iso3.get(iso3, {}) or {}).get("capital", ""),
+            "nativeName": native_names_by_iso3.get(iso3, ""),
+            "capital": (capital_metadata_by_iso3.get(iso3, {}) or {}).get("capitalName")
+            or (capitals_by_iso3.get(iso3, {}) or {}).get("capital", ""),
             "capitalLat": (capitals_by_iso3.get(iso3, {}) or {}).get("capitalLat"),
             "capitalLng": (capitals_by_iso3.get(iso3, {}) or {}).get("capitalLng"),
+            "capitalPopulation": (capital_metadata_by_iso3.get(iso3, {}) or {}).get("capitalPopulation"),
+            "capitalImageUrl": (capital_metadata_by_iso3.get(iso3, {}) or {}).get("capitalImageUrl", ""),
+            "capitalSummaryEn": (capital_metadata_by_iso3.get(iso3, {}) or {}).get("capitalSummaryEn", ""),
+            "capitalWikiTitle": (capital_metadata_by_iso3.get(iso3, {}) or {}).get("capitalWikiTitle", ""),
             "leaderName": (leaders_by_iso2.get(iso2_code or "", {}) or {}).get("leaderName", ""),
             "leaderRole": (leaders_by_iso2.get(iso2_code or "", {}) or {}).get("leaderRole", ""),
             "leaderImageUrl": (leaders_by_iso2.get(iso2_code or "", {}) or {}).get("leaderImageUrl", ""),
